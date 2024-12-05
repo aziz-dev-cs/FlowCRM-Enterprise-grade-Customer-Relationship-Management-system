@@ -1,0 +1,131 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: flowcrm-postgres
+    environment:
+      POSTGRES_DB: flowcrm
+      POSTGRES_USER: flowcrm_user
+      POSTGRES_PASSWORD: flowcrm_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - flowcrm-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: flowcrm-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - flowcrm-network
+
+  nestjs-api:
+    build: ./backend-nestjs
+    container_name: flowcrm-nestjs
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      NODE_ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USERNAME: flowcrm_user
+      DB_PASSWORD: flowcrm_pass
+      DB_DATABASE: flowcrm
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+    networks:
+      - flowcrm-network
+
+  django-worker:
+    build: ./automation-worker
+    container_name: flowcrm-django
+    command: python manage.py runserver 0.0.0.0:8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      DEBUG: 'False'
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: flowcrm
+      DB_USER: flowcrm_user
+      DB_PASSWORD: flowcrm_pass
+      REDIS_URL: redis://redis:6379
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
+      NESTJS_API_URL: http://nestjs-api:3000/api
+    networks:
+      - flowcrm-network
+
+  celery-worker:
+    build: ./automation-worker
+    container_name: flowcrm-celery-worker
+    command: celery -A flowcrm_automation worker --loglevel=info
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: flowcrm
+      DB_USER: flowcrm_user
+      DB_PASSWORD: flowcrm_pass
+      REDIS_URL: redis://redis:6379
+      SENDGRID_API_KEY: ${SENDGRID_API_KEY}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
+    networks:
+      - flowcrm-network
+
+  celery-beat:
+    build: ./automation-worker
+    container_name: flowcrm-celery-beat
+    command: celery -A flowcrm_automation beat --loglevel=info
+    depends_on:
+      - redis
+      - postgres
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: flowcrm
+      DB_USER: flowcrm_user
+      DB_PASSWORD: flowcrm_pass
+      REDIS_URL: redis://redis:6379
+    networks:
+      - flowcrm-network
+
+  frontend:
+    build: ./frontend
+    container_name: flowcrm-frontend
+    ports:
+      - "3001:3000"
+    depends_on:
+      - nestjs-api
+    environment:
+      REACT_APP_API_URL: http://localhost:3000/api
+      REACT_APP_WS_URL: ws://localhost:3000
+    networks:
+      - flowcrm-network
+
+networks:
+  flowcrm-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
